@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Car travel time finder</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1c1f24; --muted: #667085;
+    --line: #e4e7ec; --hover: #f0f3f8; --accent: #2563eb; --accent-text: #ffffff;
+    --error: #b42318;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a; --card: #1d2025; --text: #e8eaed; --muted: #9aa3af;
+      --line: #2c3037; --hover: #252932; --accent: #4f83f1; --accent-text: #ffffff;
+      --error: #f97066;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; line-height: 1.45;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 2rem 1rem 3rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
+  .sub { color: var(--muted); margin: 0 0 1.25rem; font-size: .95rem; }
+
+  form.search { display: flex; gap: .5rem; }
+  .search input[type="search"] {
+    flex: 1; min-width: 0; padding: .7rem .9rem; font: inherit; color: inherit;
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+  }
+  .search input[type="search"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .btn {
+    padding: .7rem 1.1rem; font: inherit; font-weight: 600; cursor: pointer;
+    background: var(--accent); color: var(--accent-text); border: 0; border-radius: 8px;
+  }
+  .btn:disabled { opacity: .6; cursor: default; }
+  .btn.secondary { background: none; color: var(--accent); border: 1px solid var(--line); font-weight: 500; }
+  .btn.secondary[hidden] { display: none; }
+  .link-btn {
+    background: none; border: 0; color: var(--accent); cursor: pointer;
+    font: inherit; font-size: .9rem; padding: .25rem .5rem;
+  }
+
+  details.dests {
+    margin-top: .75rem; background: var(--card); border: 1px solid var(--line);
+    border-radius: 8px; padding: .6rem .9rem;
+  }
+  details.dests summary { cursor: pointer; color: var(--muted); font-size: .92rem; }
+  details.dests textarea {
+    width: 100%; min-height: 9rem; margin-top: .6rem; padding: .6rem; font: inherit; font-size: .92rem;
+    color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; resize: vertical;
+  }
+  .dests .row { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
+  .hint { color: var(--muted); font-size: .82rem; margin: .4rem 0 0; }
+
+  #status-wrap { margin: 1.25rem 0 .5rem; min-height: 1.5rem; }
+  #status { margin: 0; color: var(--muted); font-size: .92rem; }
+  #status.error { color: var(--error); }
+  progress { width: 100%; height: .5rem; margin-top: .4rem; accent-color: var(--accent); }
+  progress[hidden] { display: none; }
+
+  .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: .5rem; }
+  .toolbar[hidden], .list[hidden] { display: none; }
+  .origin-name { color: var(--muted); font-size: .9rem; }
+
+  .list { background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .item + .item { border-top: 1px solid var(--line); }
+  .head {
+    display: grid; grid-template-columns: 1fr auto auto 1.25rem; gap: .75rem; align-items: center;
+    width: 100%; padding: .85rem 1rem; background: none; border: 0; color: inherit;
+    font: inherit; text-align: left; cursor: pointer;
+  }
+  .head:hover { background: var(--hover); }
+  .head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .dest { font-weight: 600; }
+  .time { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .dist { color: var(--muted); font-variant-numeric: tabular-nums; font-size: .9rem; }
+  .chev { color: var(--muted); transition: transform .15s ease; }
+  .item.open .chev { transform: rotate(90deg); }
+  .panel { padding: 0 1rem 1rem; }
+  .map { height: 380px; border-radius: 8px; border: 1px solid var(--line); }
+
+  .skipped { margin-top: 1rem; color: var(--muted); font-size: .88rem; }
+  .skipped[hidden] { display: none; }
+  .skipped ul { margin: .25rem 0 0; padding-left: 1.2rem; }
+
+  footer { color: var(--muted); font-size: .8rem; margin-top: 1.25rem; }
+  @media (max-width: 520px) {
+    .head { grid-template-columns: 1fr auto 1.25rem; }
+    .dist { display: none; }
+    .map { height: 300px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Car travel time finder</h1>
+  <p class="sub">Enter a starting location to see the driving time and route to each destination.</p>
+
+  <form class="search" id="search-form" autocomplete="off">
+    <input type="search" id="origin" placeholder="Starting location, e.g. Wageningen" aria-label="Starting location" required>
+    <button class="btn" type="submit" id="go">Find routes</button>
+    <button class="btn secondary" type="button" id="stop" hidden>Stop</button>
+  </form>
+
+  <details class="dests" id="dests-box">
+    <summary id="dests-summary">Destinations</summary>
+    <textarea id="dests" aria-label="Destinations, one per line" spellcheck="false"></textarea>
+    <div class="row">
+      <p class="hint" id="dests-hint">One per line. Lines starting with # are ignored.</p>
+      <button type="button" class="link-btn" id="reset-dests">Reset to defaults</button>
+    </div>
+  </details>
+
+  <div id="status-wrap" aria-live="polite">
+    <p id="status"></p>
+    <progress id="progress" hidden></progress>
+  </div>
+
+  <div class="toolbar" id="toolbar" hidden>
+    <span class="origin-name" id="origin-name"></span>
+    <button type="button" class="link-btn" id="toggle-all">Expand all</button>
+  </div>
+  <div class="list" id="list" hidden></div>
+  <div class="skipped" id="skipped" hidden></div>
+
+  <footer>
+    Typical driving times, without live traffic. Map data &copy; OpenStreetMap contributors;
+    place search by Nominatim, routing by OSRM.
+  </footer>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+  // ---- Settings (override by defining window.ROUTE_FINDER_CONFIG before this script) ----
+  const CONFIG = {
+destinations: [
+  // Spain
+  'Siurana, Spain',
+  'Margalef, Spain',
+  'Rodellar, Spain',
+  'Chulilla, Spain',
+  'El Chorro, Spain',
+  'Montserrat, Spain',
+  'Mallorca, Spain',
+
+  // France
+  'Fontainebleau, France',
+  'Verdon Gorge, France',
+  'Céüse, France',
+  'Buoux, France',
+  'Chamonix, France',
+  'Calanques, France',
+  'Orpierre, France',
+
+  // Italy
+  'Arco, Italy',
+  'Dolomites, Italy',
+  'Finale Ligure, Italy',
+  'Val di Mello, Italy',
+  'Cala Gonone, Italy',
+
+  // Switzerland
+  'Cresciano, Switzerland',
+  'Chironico, Switzerland',
+  'Grimsel Pass, Switzerland',
+  'Rätikon, Switzerland',
+
+  // Austria
+  'Zillertal, Austria',
+  'Gesäuse, Austria',
+  'Wilder Kaiser, Austria',
+
+  // Germany
+  'Frankenjura, Germany',
+  'Saxon Switzerland, Germany',
+  'Pfalz, Germany',
+
+  // UK & Ireland
+  'Peak District, United Kingdom',
+  'Snowdonia, United Kingdom',
+  'Isle of Skye, United Kingdom',
+  'Fair Head, Ireland',
+
+  // Eastern & Southeastern Europe
+  'Paklenica, Croatia',
+  'Omiš, Croatia',
+  'Kalymnos, Greece',
+  'Meteora, Greece',
+  'Adršpach, Czech Republic',
+  'Tatras, Slovakia',
+  'Osp, Slovenia',
+
+  // Nordics
+  'Lofoten, Norway',
+  'Romsdalen, Norway',
+  'Kullaberg, Sweden',
+
+  // Portugal & Atlantic
+  'Sintra, Portugal',
+  'Arrábida, Portugal',
+  'Tenerife, Spain',
+  'Gran Canaria, Spain'
+],
+    maxDestinations: 20,
+    pauseMs: 1100,          // minimum gap between requests to each free service
+    contactEmail: '',       // optional: sent to Nominatim so they can contact you about heavy use
+    nominatim: 'https://nominatim.openstreetmap.org/search',
+    osrm: 'https://router.project-osrm.org/route/v1/driving',
+    storageKey: 'routeFinder.destinations'
+  };
+  Object.assign(CONFIG, window.ROUTE_FINDER_CONFIG || {});
+
+  // ---- Small helpers ----
+  const $ = (id) => document.getElementById(id);
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  function formatDuration(seconds) {
+    const total = Math.round(seconds / 60);
+    const h = Math.floor(total / 60), m = total % 60;
+    return h ? h + ' h ' + m + ' min' : m + ' min';
+  }
+  function makeThrottle(ms) {
+    let last = 0;
+    return async function () {
+      const wait = last + ms - Date.now();
+      if (wait > 0) await sleep(wait);
+      last = Date.now();
+    };
+  }
+  const throttleGeocode = makeThrottle(CONFIG.pauseMs);
+  const throttleRoute = makeThrottle(CONFIG.pauseMs);
+
+  // ---- Network calls ----
+  async function getJson(url) {
+    let res;
+    try {
+      res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+    } catch (e) {
+      throw new Error('network problem, please try again');
+    }
+    if (res.status === 429) throw new Error('rate limited by the free service, wait a minute and retry');
+    if (!res.ok) throw new Error('service error (' + res.status + ')');
+    return res.json();
+  }
+
+  const geoCache = new Map();
+  async function geocode(query) {
+    const key = query.trim().toLowerCase();
+    if (geoCache.has(key)) return geoCache.get(key);
+    await throttleGeocode();
+    const params = new URLSearchParams({ q: query, format: 'jsonv2', limit: '1' });
+    if (CONFIG.contactEmail) params.set('email', CONFIG.contactEmail);
+    const results = await getJson(CONFIG.nominatim + '?' + params);
+    if (!results.length) throw new Error('place not found');
+    const place = { lat: parseFloat(results[0].lat), lon: parseFloat(results[0].lon), name: results[0].display_name };
+    geoCache.set(key, place);
+    return place;
+  }
+
+  async function getRoute(from, to) {
+    await throttleRoute();
+    const coords = from.lon + ',' + from.lat + ';' + to.lon + ',' + to.lat;
+    const data = await getJson(CONFIG.osrm + '/' + coords + '?overview=full&geometries=geojson');
+    if (data.code !== 'Ok' || !data.routes || !data.routes.length) throw new Error('no driving route found');
+    const r = data.routes[0];
+    return {
+      seconds: r.duration,
+      km: r.distance / 1000,
+      // GeoJSON is [lon, lat]; Leaflet wants [lat, lon]
+      path: r.geometry.coordinates.map(function (c) { return [c[1], c[0]]; })
+    };
+  }
+
+  // ---- Destinations editor ----
+  function loadSavedDestinations() {
+    try {
+      const saved = localStorage.getItem(CONFIG.storageKey);
+      if (saved) return saved;
+    } catch (e) { /* storage unavailable */ }
+    return CONFIG.destinations.join('\n');
+  }
+  function saveDestinations(text) {
+    try { localStorage.setItem(CONFIG.storageKey, text); } catch (e) { /* ignore */ }
+  }
+  function parseDestinations(text) {
+    const seen = new Set(), out = [];
+    text.split('\n').forEach(function (line) {
+      const t = line.trim();
+      if (!t || t.charAt(0) === '#') return;
+      const k = t.toLowerCase();
+      if (seen.has(k)) return;
+      seen.add(k);
+      out.push(t);
+    });
+    return out;
+  }
+  function updateDestSummary() {
+    const n = parseDestinations($('dests').value).length;
+    $('dests-summary').textContent = 'Destinations (' + n + ')';
+    $('dests-hint').textContent = n > CONFIG.maxDestinations
+      ? 'Only the first ' + CONFIG.maxDestinations + ' destinations will be used.'
+      : 'One per line. Lines starting with # are ignored.';
+  }
+  $('dests').value = loadSavedDestinations();
+  updateDestSummary();
+  $('dests').addEventListener('input', function () {
+    saveDestinations($('dests').value);
+    updateDestSummary();
+  });
+  $('reset-dests').addEventListener('click', function () {
+    $('dests').value = CONFIG.destinations.join('\n');
+    saveDestinations($('dests').value);
+    updateDestSummary();
+  });
+
+  // ---- Results list ----
+  const list = $('list');
+  let items = [];          // { el, seconds, setOpen }
+  let originLabel = '';
+
+  function popupText(label, name) {
+    const d = document.createElement('div');
+    d.textContent = label + ': ' + name;
+    return d;
+  }
+  function initMap(container, route, startPlace, endName) {
+    const map = L.map(container);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+    const line = L.polyline(route.path, { color: '#2563eb', weight: 5, opacity: 0.85 }).addTo(map);
+    const start = route.path[0], end = route.path[route.path.length - 1];
+    L.circleMarker(start, { radius: 8, color: '#fff', weight: 2, fillColor: '#16a34a', fillOpacity: 1 })
+      .addTo(map).bindPopup(popupText('Start', startPlace));
+    L.circleMarker(end, { radius: 8, color: '#fff', weight: 2, fillColor: '#dc2626', fillOpacity: 1 })
+      .addTo(map).bindPopup(popupText('End', endName));
+    map.fitBounds(line.getBounds(), { padding: [30, 30] });
+    return map;
+  }
+
+  function addRouteRow(destName, route, uid) {
+    const item = el('div', 'item');
+    const head = el('button', 'head');
+    head.type = 'button';
+    head.setAttribute('aria-expanded', 'false');
+    head.setAttribute('aria-controls', 'panel-' + uid);
+    const chev = el('span', 'chev', '\u25B6');
+    chev.setAttribute('aria-hidden', 'true');
+    head.append(el('span', 'dest', destName), el('span', 'dist', route.km.toFixed(1) + ' km'),
+                el('span', 'time', formatDuration(route.seconds)), chev);
+
+    const panel = el('div', 'panel');
+    panel.id = 'panel-' + uid;
+    panel.hidden = true;
+    const mapEl = el('div', 'map');
+    panel.appendChild(mapEl);
+
+    let map = null;
+    function setOpen(open) {
+      head.setAttribute('aria-expanded', String(open));
+      panel.hidden = !open;
+      item.classList.toggle('open', open);
+      if (open) {
+        // Create the map lazily, once the panel is visible so Leaflet can measure it
+        if (!map) map = initMap(mapEl, route, originLabel, destName);
+        else map.invalidateSize();
+      }
+    }
+    head.addEventListener('click', function () { setOpen(head.getAttribute('aria-expanded') !== 'true'); });
+    item.append(head, panel);
+
+    // Insert in sorted position so rows already on screen (and their maps) are never rebuilt
+    const entry = { el: item, seconds: route.seconds, setOpen: setOpen };
+    const next = items.find(function (it) { return it.seconds > entry.seconds; });
+    if (next) { list.insertBefore(item, next.el); items.splice(items.indexOf(next), 0, entry); }
+    else { list.appendChild(item); items.push(entry); }
+  }
+
+  $('toggle-all').addEventListener('click', function () {
+    const btn = $('toggle-all');
+    const expand = btn.textContent === 'Expand all';
+    items.forEach(function (it) { it.setOpen(expand); });
+    btn.textContent = expand ? 'Collapse all' : 'Expand all';
+  });
+
+  // ---- Running a search ----
+  let runId = 0;
+  function setStatus(text, isError) {
+    $('status').textContent = text;
+    $('status').classList.toggle('error', !!isError);
+  }
+  function setRunning(running) {
+    $('go').disabled = running;
+    $('stop').hidden = !running;
+    $('origin').readOnly = running;
+  }
+  function clearResults() {
+    items = [];
+    list.replaceChildren();
+    list.hidden = true;
+    $('toolbar').hidden = true;
+    $('toggle-all').textContent = 'Expand all';
+    $('skipped').hidden = true;
+    $('skipped').replaceChildren();
+  }
+
+  async function run(originQuery) {
+    const my = ++runId;
+    clearResults();
+    setRunning(true);
+    $('progress').hidden = true;
+
+    const destinations = parseDestinations($('dests').value).slice(0, CONFIG.maxDestinations);
+    if (!destinations.length) {
+      setStatus('Add at least one destination.', true);
+      setRunning(false);
+      return;
+    }
+
+    const skipped = [];
+    try {
+      setStatus('Looking up "' + originQuery + '"...');
+      const origin = await geocode(originQuery);
+      if (my !== runId) return;
+      originLabel = origin.name;
+      $('origin-name').textContent = 'From: ' + origin.name;
+      $('toolbar').hidden = false;
+
+      const progress = $('progress');
+      progress.max = destinations.length;
+      progress.value = 0;
+      progress.hidden = false;
+
+      for (let i = 0; i < destinations.length; i++) {
+        const dest = destinations[i];
+        setStatus('Calculating route ' + (i + 1) + ' of ' + destinations.length + ': ' + dest);
+        try {
+          const place = await geocode(dest);
+          if (my !== runId) return;
+          const route = await getRoute(origin, place);
+          if (my !== runId) return;
+          addRouteRow(dest, route, i);
+          list.hidden = false;
+        } catch (e) {
+          if (my !== runId) return;
+          skipped.push(dest + ' (' + e.message + ')');
+        }
+        progress.value = i + 1;
+      }
+    } catch (e) {
+      if (my !== runId) return;
+      setStatus('Could not look up "' + originQuery + '": ' + e.message + '.', true);
+      $('toolbar').hidden = true;
+      setRunning(false);
+      $('progress').hidden = true;
+      return;
+    }
+
+    if (my !== runId) return;
+    $('progress').hidden = true;
+    setRunning(false);
+    if (items.length) {
+      setStatus(items.length + (items.length === 1 ? ' route' : ' routes') +
+                ', sorted by travel time. Click a row to see its map.');
+    } else {
+      setStatus('No routes could be calculated.', true);
+    }
+    if (skipped.length) {
+      const box = $('skipped');
+      box.append(el('div', null, 'Skipped:'));
+      const ul = el('ul');
+      skipped.forEach(function (s) { ul.appendChild(el('li', null, s)); });
+      box.appendChild(ul);
+      box.hidden = false;
+    }
+  }
+
+  $('search-form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    const q = $('origin').value.trim();
+    if (q) run(q);
+  });
+  $('stop').addEventListener('click', function () {
+    runId++;   // abandons the running search
+    $('progress').hidden = true;
+    setRunning(false);
+    setStatus(items.length ? 'Stopped. Showing ' + items.length + ' route(s) found so far.' : 'Stopped.');
+  });
+</script>
+</body>
+</html>
