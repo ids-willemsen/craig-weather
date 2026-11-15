@@ -1,0 +1,6 @@
+origin,destination,distance_km,travel_time_minutes,map_file
+Wageningen,"Amsterdam Centraal, Netherlands",85.6,74,01-amsterdam-centraal-netherlands.html
+Wageningen,"Utrecht Centraal, Netherlands",49.4,46,02-utrecht-centraal-netherlands.html
+Wageningen,"Rotterdam Centraal, Netherlands",99.2,82,03-rotterdam-centraal-netherlands.html
+Wageningen,"Arnhem Centraal, Netherlands",19.8,25,04-arnhem-centraal-netherlands.html
+Wageningen,"Eindhoven Centraal, Netherlands",79.0,65,05-eindhoven-centraal-netherlands.html

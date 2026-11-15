@@ -11,11 +11,17 @@ Note: no live traffic, so this is the typical driving time.
 
 Setup:  pip install requests
 Usage:  python travel_time_map.py "Wageningen, Netherlands" "Amsterdam Centraal"
-        python travel_time_map.py "Wageningen" "Utrecht" -o utrecht.html --no-open
+        python travel_time_map.py "Wageningen" "Utrecht" -o utrecht.html
+
+The map is served from a small local web server (Ctrl+C to stop). This is needed
+because OSM's tile servers reject requests that have no Referer header, which is
+what happens if you open the HTML file directly from disk.
 """
 
 import argparse
+import functools
 import html
+import http.server
 import json
 import sys
 import webbrowser
@@ -73,6 +79,7 @@ MAP_TEMPLATE = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin">
 <title>Route: __ORIGIN__ to __DEST__</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
@@ -132,12 +139,38 @@ def build_map(route: dict, origin: str, destination: str, out_path: Path) -> Non
     out_path.write_text(page, encoding="utf-8")
 
 
+class QuietHandler(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass  # keep the terminal clean
+
+
+def serve_map(out_path: Path, open_browser: bool) -> None:
+    """Serve the map over http://127.0.0.1 so the browser sends a Referer to the tile server.
+
+    OSM's tile servers block requests without a Referer, which is what happens
+    when an HTML file is opened directly from disk (file://).
+    """
+    handler = functools.partial(QuietHandler, directory=str(out_path.parent))
+    with http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler) as httpd:  # port 0 = any free port
+        url = f"http://127.0.0.1:{httpd.server_address[1]}/{out_path.name}"
+        print(f"Serving map at: {url}")
+        print("Press Ctrl+C to stop.")
+        if open_browser:
+            webbrowser.open(url)
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print("\nStopped.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Car travel time + route map between two locations.")
     parser.add_argument("origin", help="Start address or place name")
     parser.add_argument("destination", help="End address or place name")
     parser.add_argument("-o", "--output", default="route_map.html", help="Output HTML file")
     parser.add_argument("--no-open", action="store_true", help="Don't open the map in a browser")
+    parser.add_argument("--no-serve", action="store_true",
+                        help="Only save the HTML file (map tiles won't load if opened directly from disk)")
     args = parser.parse_args()
 
     try:
@@ -154,8 +187,8 @@ def main():
     build_map(route, args.origin, args.destination, out_path)
     print(f"Map saved to: {out_path}")
 
-    if not args.no_open:
-        webbrowser.open(out_path.as_uri())
+    if not args.no_serve:
+        serve_map(out_path, open_browser=not args.no_open)
 
 
 if __name__ == "__main__":
